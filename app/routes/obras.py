@@ -4,7 +4,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Obra, ApontamentoItem, get_db
+from app.models import Obra, Apontamento, ApontamentoItem, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/obras", tags=["obras"])
@@ -101,6 +101,20 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
     o = db.query(Obra).filter(Obra.id == id).first()
     if not o:
         raise HTTPException(404, "Obra não encontrada")
+
+    # Apaga os itens de apontamento que referenciam esta obra
+    itens = db.query(ApontamentoItem).filter(ApontamentoItem.obra_id == id).all()
+    apontamento_ids = {i.apontamento_id for i in itens}
+    for i in itens:
+        db.delete(i)
+    db.flush()
+
+    # Se algum apontamento ficou sem itens e sem adicionais, remove o cabeçalho também
+    for apto_id in apontamento_ids:
+        apto = db.query(Apontamento).filter(Apontamento.id == apto_id).first()
+        if apto and not apto.itens and not apto.adicionais:
+            db.delete(apto)
+
     db.delete(o)
     db.commit()
     return {"ok": True}

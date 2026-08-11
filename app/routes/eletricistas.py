@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Eletricista, get_db
+from app.models import Eletricista, Apontamento, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/eletricistas", tags=["eletricistas"])
@@ -80,6 +80,14 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
     e = db.query(Eletricista).filter(Eletricista.id == id).first()
     if not e:
         raise HTTPException(404, "Eletricista não encontrado")
+
+    # Apaga os apontamentos (cabeçalho) deste eletricista — itens e
+    # adicionais são removidos em cascata automaticamente
+    apontamentos = db.query(Apontamento).filter(Apontamento.eletricista_id == id).all()
+    for a in apontamentos:
+        db.delete(a)
+    db.flush()
+
     db.delete(e)
     db.commit()
     return {"ok": True}

@@ -25,6 +25,11 @@ def verificar_senha(senha: str, hash: str) -> bool:
 
 def criar_token(data: dict) -> str:
     payload = data.copy()
+    # JWT exige que "sub" seja string (RFC 7519) — o python-jose valida isso
+    # de forma incondicional em jwt.decode() e rejeita qualquer token onde
+    # "sub" tenha sido salvo como número.
+    if "sub" in payload:
+        payload["sub"] = str(payload["sub"])
     payload["exp"] = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -33,10 +38,11 @@ def get_usuario_atual(token: str = Depends(oauth2_scheme), db: Session = Depends
     erro = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        sub = payload.get("sub")
+        if sub is None:
             raise erro
-    except JWTError:
+        user_id = int(sub)
+    except (JWTError, ValueError):
         raise erro
     usuario = db.query(Usuario).filter(Usuario.id == user_id).first()
     if not usuario or not usuario.ativo:
