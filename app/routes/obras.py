@@ -63,7 +63,10 @@ def get_total_gasto(db: Session, obra_id: int) -> float:
 @router.get("/")
 def listar(db: Session = Depends(get_db), _=Depends(get_usuario_atual)):
     obras = db.query(Obra).order_by(Obra.criado_em.desc()).all()
-    return [serializar(o, get_total_gasto(db, o.id)) for o in obras]
+    # um único SELECT ... GROUP BY em vez de uma consulta por obra
+    gastos = dict(db.query(ApontamentoItem.obra_id, func.sum(ApontamentoItem.valor))
+                  .group_by(ApontamentoItem.obra_id).all())
+    return [serializar(o, gastos.get(o.id) or 0) for o in obras]
 
 
 @router.post("/")

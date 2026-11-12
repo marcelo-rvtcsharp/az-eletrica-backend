@@ -34,12 +34,13 @@ def resumo(db: Session = Depends(get_db), _=Depends(get_usuario_atual)):
     obras_negativas = 0
     obras_atencao = 0
 
+    gastos = dict(db.query(ApontamentoItem.obra_id, func.sum(ApontamentoItem.valor))
+                  .group_by(ApontamentoItem.obra_id).all())
+
     for o in obras:
         if o.status == "Concluída":
             continue
-        gasto = db.query(func.sum(ApontamentoItem.valor)).filter(
-            ApontamentoItem.obra_id == o.id
-        ).scalar() or 0
+        gasto = gastos.get(o.id) or 0
         saldo = o.valor_contratado - gasto
         perc = round(gasto / o.valor_contratado * 100, 1) if o.valor_contratado > 0 else 0
         situacao = "negativo" if saldo < 0 else "atencao" if perc >= o.alerta_percentual else "ok"
@@ -63,19 +64,15 @@ def resumo(db: Session = Depends(get_db), _=Depends(get_usuario_atual)):
     eletricistas_ativos = db.query(Eletricista).filter(Eletricista.status == "Ativo").count()
 
     # Últimos apontamentos
-    ultimos = db.query(Apontamento).order_by(Apontamento.data.desc(), Apontamento.criado_em.desc()).limit(10).all()
-    ultimos_lista = []
-    for a in ultimos:
-        elet = db.query(Eletricista).filter(Eletricista.id == a.eletricista_id).first()
-        itens = db.query(ApontamentoItem).filter(ApontamentoItem.apontamento_id == a.id).all()
-        for item in itens:
-            obra = db.query(Obra).filter(Obra.id == item.obra_id).first()
-            ultimos_lista.append({
-                "eletricista": elet.nome if elet else "",
-                "obra": obra.nome if obra else "",
-                "valor": item.valor,
-                "data": str(a.data),
-            })
+    # últimos apontamentos em uma consulta só (join com funcionário e obra)
+    linhas = (db.query(Apontamento.data, Eletricista.nome, Obra.nome, ApontamentoItem.valor)
+              .join(ApontamentoItem, ApontamentoItem.apontamento_id == Apontamento.id)
+              .outerjoin(Eletricista, Eletricista.id == Apontamento.eletricista_id)
+              .outerjoin(Obra, Obra.id == ApontamentoItem.obra_id)
+              .order_by(Apontamento.data.desc(), Apontamento.criado_em.desc(), Apontamento.id.desc())
+              .limit(15).all())
+    ultimos_lista = [{"eletricista": en or "", "obra": on or "", "valor": v, "data": str(d)}
+                     for d, en, on, v in linhas]
 
     return {
         "semana": {
