@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Eletricista, Apontamento, get_db
+from app.models import Eletricista, Apontamento, LancamentoFinanceiro, Emprestimo, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/eletricistas", tags=["eletricistas"])
@@ -16,6 +16,7 @@ class EletricistaSchema(BaseModel):
     funcao: str = "Eletricista"
     valor_diaria: float
     tipo_contrato: str = "Diarista"
+    salario_fixo: float = 0
     nr10_validade: Optional[date] = None
     nr35_validade: Optional[date] = None
     data_entrada: Optional[date] = None
@@ -31,6 +32,7 @@ def serializar(e: Eletricista) -> dict:
         "funcao": e.funcao,
         "valor_diaria": e.valor_diaria,
         "tipo_contrato": e.tipo_contrato,
+        "salario_fixo": e.salario_fixo or 0,
         "nr10_validade": str(e.nr10_validade) if e.nr10_validade else None,
         "nr35_validade": str(e.nr35_validade) if e.nr35_validade else None,
         "data_entrada": str(e.data_entrada) if e.data_entrada else None,
@@ -88,6 +90,8 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
         db.delete(a)
     db.flush()
 
+    db.query(LancamentoFinanceiro).filter(LancamentoFinanceiro.eletricista_id == id).delete()
+    db.query(Emprestimo).filter(Emprestimo.eletricista_id == id).delete()
     db.delete(e)
     db.commit()
     return {"ok": True}

@@ -58,6 +58,7 @@ class Eletricista(Base):
     funcao        = Column(String, default="Eletricista")
     valor_diaria  = Column(Float, nullable=False)
     tipo_contrato = Column(String, default="Diarista")
+    salario_fixo  = Column(Float, default=0)   # usado quando tipo_contrato == "Mensalista"
     nr10_validade = Column(Date, nullable=True)
     nr35_validade = Column(Date, nullable=True)
     data_entrada  = Column(Date, nullable=True)
@@ -165,3 +166,40 @@ class OrcamentoItem(Base):
     ordem        = Column(Integer, default=0)
 
     orcamento = relationship("Orcamento", back_populates="itens")
+
+
+# ── Financeiro: adiantamentos, adicionais e descontos avulsos ──────────────
+class LancamentoFinanceiro(Base):
+    __tablename__ = "lancamentos_financeiros"
+    id             = Column(Integer, primary_key=True, index=True)
+    eletricista_id = Column(Integer, ForeignKey("eletricistas.id"), nullable=False)
+    data           = Column(Date, nullable=False)       # o mês desta data define a folha
+    tipo           = Column(String, nullable=False)     # adiantamento | adicional | desconto
+    valor          = Column(Float, nullable=False)
+    descricao      = Column(String)
+    criado_em      = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Financeiro: empréstimos descontados em parcelas mensais ────────────────
+class Emprestimo(Base):
+    __tablename__ = "emprestimos"
+    id             = Column(Integer, primary_key=True, index=True)
+    eletricista_id = Column(Integer, ForeignKey("eletricistas.id"), nullable=False)
+    descricao      = Column(String, nullable=False)     # Ex: "Moto", "Empréstimo"
+    valor_total    = Column(Float, nullable=False)
+    valor_parcela  = Column(Float, nullable=False)
+    inicio         = Column(Date, nullable=False)       # mês da folha com a 1ª parcela
+    observacao     = Column(Text)
+    criado_em      = Column(DateTime, default=datetime.utcnow)
+
+
+def migrar_colunas(engine):
+    """create_all() não altera tabelas que já existem; aqui adicionamos
+    as colunas novas em bancos criados antes desta versão."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if "eletricistas" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("eletricistas")}
+        if "salario_fixo" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE eletricistas ADD COLUMN salario_fixo FLOAT DEFAULT 0"))
