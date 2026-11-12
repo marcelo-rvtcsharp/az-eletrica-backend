@@ -78,8 +78,22 @@ def ler_planilha(caminho):
             "vl_he": num(r[10]),
             "total": num(r[12]) or (num(r[9]) + num(r[10]) + num(r[11])),
         })
+    # Obras marcadas no Cadastro com "JUNTADA COM <OBRA>" na OBS: os lançamentos
+    # vão para a outra obra e esta é removida do app.
+    juntadas = {}
+    for o in obras:
+        obs = norm(o["obs"])
+        if obs.startswith("JUNTADA COM "):
+            destino = obs[len("JUNTADA COM "):].split(" EM ")[0].strip()
+            juntadas[norm(o["nome"])] = destino
+    obras = [o for o in obras if norm(o["nome"]) not in juntadas]
+    nomes = {norm(o["nome"]): o["nome"] for o in obras}
+    for l in linhas:
+        if norm(l["obra"]) in juntadas:
+            l["obra"] = nomes.get(juntadas[norm(l["obra"])], l["obra"])
+
     folha = ler_folha(wb)
-    return funcionarios, obras, linhas, folha
+    return funcionarios, obras, linhas, folha, juntadas
 
 
 def ler_folha(wb):
@@ -116,7 +130,7 @@ def main():
     if len(sys.argv) < 2:
         print("Uso: python scripts/importar_planilha.py CAMINHO_DA_PLANILHA.xlsx")
         return
-    funcionarios, obras, linhas, folha = ler_planilha(sys.argv[1])
+    funcionarios, obras, linhas, folha, juntadas = ler_planilha(sys.argv[1])
 
     # obras que aparecem nos apontamentos mas não estão no cadastro
     nomes_obras = {norm(o["nome"]) for o in obras}
@@ -223,6 +237,16 @@ def main():
                 erros.append(e)
             print(f"\rApontamentos: {feitos}/{len(grupos)}  (erros: {len(erros)})", end="", flush=True)
     print()
+
+    # Remove do app as obras que foram juntadas a outra (se ficaram vazias)
+    if juntadas:
+        for o in s.get(f"{BASE_URL}/obras/", timeout=TIMEOUT).json():
+            if norm(o["nome"]) in juntadas:
+                if o.get("total_gasto", 0) == 0:
+                    s.delete(f"{BASE_URL}/obras/{o['id']}", timeout=TIMEOUT).raise_for_status()
+                    print(f"Obra '{o['nome']}' removida (lançamentos foram para {juntadas[norm(o['nome'])]})")
+                else:
+                    print(f"! Obra '{o['nome']}' ainda tem lançamentos; não foi removida")
 
     if folha:
         importar_folha(s, folha, ids_func)
