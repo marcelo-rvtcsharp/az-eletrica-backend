@@ -12,23 +12,28 @@ Uso:
 import getpass
 import requests
 
-BASE_URL = "https://web-production-a606c.up.railway.app"
+BASE_URL = "https://az-eletrica-backend.onrender.com"
 
 
 def main():
     print("=== Cadastrar novo login no AZ Elétrica ===\n")
-    print("1) Seu login (quem está cadastrando):")
+    print("(A primeira chamada pode levar ~1 minuto: o servidor gratuito 'acorda'.)\n")
+    print("1) Seu login (quem está cadastrando).")
+    print("   Se este for o PRIMEIRO usuário do sistema, só aperte Enter nos dois campos.")
     admin_email = input("   E-mail: ").strip()
     admin_senha = getpass.getpass("   Senha: ").strip()
 
-    r = requests.post(
-        f"{BASE_URL}/auth/login",
-        data={"username": admin_email, "password": admin_senha},
-    )
-    if r.status_code != 200:
-        print(f"\nNão foi possível entrar: {r.json().get('detail', r.text)}")
-        return
-    token = r.json()["access_token"]
+    headers = {}
+    if admin_email:
+        r = requests.post(
+            f"{BASE_URL}/auth/login",
+            data={"username": admin_email, "password": admin_senha},
+            timeout=120,
+        )
+        if r.status_code != 200:
+            print(f"\nNão foi possível entrar: {r.json().get('detail', r.text)}")
+            return
+        headers["Authorization"] = f"Bearer {r.json()['access_token']}"
 
     print("\n2) Dados do novo usuário:")
     nome = input("   Nome: ").strip()
@@ -38,7 +43,8 @@ def main():
     r = requests.post(
         f"{BASE_URL}/auth/registro",
         json={"nome": nome, "email": email, "senha": senha},
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
+        timeout=120,
     )
 
     if r.status_code == 200:
