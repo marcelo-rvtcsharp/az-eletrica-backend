@@ -84,7 +84,7 @@ def criar(data: OrcamentoSchema, db: Session = Depends(get_db), _=Depends(get_us
     db.add(orc)
     db.flush()
     for idx, item in enumerate(data.itens):
-        db.add(OrcamentoItem(orcamento_id=orc.id, ordem=idx, **item.model_dump()))
+        db.add(OrcamentoItem(orcamento_id=orc.id, ordem=idx, **item.model_dump(exclude={"ordem"})))
     db.commit()
     db.refresh(orc)
     orc = db.query(Orcamento).options(joinedload(Orcamento.itens)).filter(Orcamento.id == orc.id).first()
@@ -116,7 +116,7 @@ def atualizar(id: int, data: OrcamentoSchema, db: Session = Depends(get_db), _=D
     # Recria itens
     db.query(OrcamentoItem).filter(OrcamentoItem.orcamento_id == id).delete()
     for idx, item in enumerate(data.itens):
-        db.add(OrcamentoItem(orcamento_id=orc.id, ordem=idx, **item.model_dump()))
+        db.add(OrcamentoItem(orcamento_id=orc.id, ordem=idx, **item.model_dump(exclude={"ordem"})))
     db.commit()
     orc = db.query(Orcamento).options(joinedload(Orcamento.itens)).filter(Orcamento.id == id).first()
     return serializar(orc)

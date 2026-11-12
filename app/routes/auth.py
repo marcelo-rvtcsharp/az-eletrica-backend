@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from typing import Optional
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from app.models import Usuario, get_db
 from app.auth import hash_senha, verificar_senha, criar_token, get_usuario_atual
+
+# Token opcional: permite criar o PRIMEIRO usuário sem login.
+# Depois que existe alguém cadastrado, só um usuário logado cria novos logins.
+_oauth2_opcional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -21,7 +26,15 @@ class TokenSchema(BaseModel):
 
 
 @router.post("/registro")
-def registrar(data: RegistroSchema, db: Session = Depends(get_db)):
+def registrar(
+    data: RegistroSchema,
+    db: Session = Depends(get_db),
+    token: Optional[str] = Depends(_oauth2_opcional),
+):
+    if db.query(Usuario).count() > 0:
+        if not token:
+            raise HTTPException(401, "Faça login para cadastrar novos usuários")
+        get_usuario_atual(token=token, db=db)  # valida o token (gera 401 se inválido)
     if db.query(Usuario).filter(Usuario.email == data.email).first():
         raise HTTPException(400, "Email já cadastrado")
     usuario = Usuario(

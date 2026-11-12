@@ -4,12 +4,25 @@ from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./az_eletrica.db")
+# Em produção (Railway) use um Volume montado em /data para o banco não
+# ser apagado a cada deploy. Se a pasta /data existir, ela é usada
+# automaticamente; a variável DATABASE_URL, se definida, tem prioridade.
+_DB_PADRAO = "sqlite:////data/az_eletrica.db" if os.path.isdir("/data") else "sqlite:///./az_eletrica.db"
+DATABASE_URL = os.getenv("DATABASE_URL", _DB_PADRAO).strip()
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+# Postgres (Neon): a connection string vem como "postgres://" ou
+# "postgresql://"; aqui fixamos o driver psycopg2 (requirements.txt).
+for _prefixo in ("postgres://", "postgresql://"):
+    if DATABASE_URL.startswith(_prefixo):
+        DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len(_prefixo):]
+        break
+
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    # pool_pre_ping: o Neon fecha conexões ociosas; isso evita erro no
+    # primeiro acesso depois que o banco "dorme".
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
