@@ -193,6 +193,20 @@ class Emprestimo(Base):
     criado_em      = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Despesas do mês: alimentação, combustível, ferramentas... ──────────────
+class Despesa(Base):
+    __tablename__ = "despesas"
+    id         = Column(Integer, primary_key=True, index=True)
+    data       = Column(Date, nullable=False)
+    categoria  = Column(String, nullable=False)   # alimentacao | combustivel | ferramentas | hospedagem | outros
+    valor      = Column(Float, nullable=False)
+    descricao  = Column(String)
+    pessoas    = Column(Integer)                  # alimentação: nº de pessoas no dia
+    obra_id    = Column(Integer, ForeignKey("obras.id"), nullable=True)
+    automatica = Column(Boolean, default=False)   # True = calculada pelos apontamentos
+    criado_em  = Column(DateTime, default=datetime.utcnow)
+
+
 def migrar_colunas(engine):
     """create_all() não altera tabelas que já existem; aqui adicionamos
     as colunas novas em bancos criados antes desta versão."""

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.models import Base, engine, migrar_colunas
-from app.routes import auth, eletricistas, obras, apontamentos, orcamentos, dashboard, financeiro
+from app.routes import auth, eletricistas, obras, apontamentos, orcamentos, dashboard, financeiro, despesas
 
 # Cria as tabelas
 Base.metadata.create_all(bind=engine)
@@ -30,6 +30,7 @@ app.include_router(apontamentos.router)
 app.include_router(orcamentos.router)
 app.include_router(dashboard.router)
 app.include_router(financeiro.router)
+app.include_router(despesas.router)
 
 
 @app.get("/")

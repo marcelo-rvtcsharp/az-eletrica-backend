@@ -6,6 +6,7 @@ O que é importado:
   - Aba "Folha Mensal": adicionais e adiantamentos do mês da folha, empréstimos
       parcelados (tabela "DESCONTOS DE ADIANTAMENTOS E MOTO") e salário fixo
       (quem tem valor mensal maior que diárias + extras vira Mensalista)
+  - Aba "Alimentação" (se existir): custo de cada dia vira uma despesa de alimentação
   - Aba "Apontamentos": cada linha vira um lançamento no app
       * um apontamento por funcionário por dia
       * cada obra do dia vira um item com o TOTAL do lançamento
@@ -92,8 +93,33 @@ def ler_planilha(caminho):
         if norm(l["obra"]) in juntadas:
             l["obra"] = nomes.get(juntadas[norm(l["obra"])], l["obra"])
 
-    folha = ler_folha(wb)
+    folha = ler_folha(wb) or {}
+    folha["alimentacao"] = ler_alimentacao(wb)
     return funcionarios, obras, linhas, folha, juntadas
+
+
+def ler_alimentacao(wb):
+    """Aba Alimentação: valor por pessoa (C3) e uma linha por dia (data, ..., PESSOAS, CUSTO)."""
+    nome = next((n for n in wb.sheetnames if norm(n).replace("Ç", "C").replace("Ã", "A").startswith("ALIMENT")), None)
+    if not nome:
+        return []
+    ws = wb[nome]
+    cab = None
+    dias = []
+    for r in ws.iter_rows(min_row=1, values_only=True):
+        if cab is None:
+            if r and norm(r[0]) == "DATA":
+                cab = [norm(c) for c in r]
+            continue
+        if not isinstance(r[0], datetime.datetime):
+            continue
+        i_p = cab.index("PESSOAS") if "PESSOAS" in cab else None
+        i_c = next((i for i, c in enumerate(cab) if c.startswith("CUSTO")), None)
+        custo = num(r[i_c]) if i_c is not None else 0
+        if custo > 0:
+            pessoas = int(num(r[i_p])) if i_p is not None else None
+            dias.append({"data": r[0].date(), "valor": round(custo, 2), "pessoas": pessoas})
+    return dias
 
 
 def ler_folha(wb):
@@ -149,7 +175,10 @@ def main():
     print(f"Lançamentos:  {len(linhas)} linhas -> {len(grupos)} apontamentos (funcionário/dia)")
     print(f"Período:      {min(l['data'] for l in linhas):%d/%m/%Y} a {max(l['data'] for l in linhas):%d/%m/%Y}")
     print(f"Total MO:     R$ {sum(l['total'] for l in linhas):,.2f}")
-    if folha:
+    if folha and folha.get("alimentacao"):
+        al = folha["alimentacao"]
+        print(f"Alimentação:  {len(al)} dias, R$ {sum(d['valor'] for d in al):,.2f}")
+    if folha and folha.get("pessoas") is not None:
         print(f"Folha {folha['mes']:02d}/{folha['ano']}:   {sum(1 for p in folha['pessoas'] if p['adicional'])} adicionais, "
               f"{sum(1 for p in folha['pessoas'] if p['adiantamento'])} adiantamentos/parcelas, "
               f"{len(folha['emprestimos'])} empréstimos, {sum(1 for p in folha['pessoas'] if p['fixo'])} salário(s) fixo(s)")
@@ -248,8 +277,10 @@ def main():
                 else:
                     print(f"! Obra '{o['nome']}' ainda tem lançamentos; não foi removida")
 
-    if folha:
+    if folha and folha.get("pessoas") is not None:
         importar_folha(s, folha, ids_func)
+    if folha and folha.get("alimentacao"):
+        importar_alimentacao(s, folha["alimentacao"])
 
     if erros:
         print("\nFalharam (rode o script de novo para tentar só repetir tudo com segurança):")
@@ -257,6 +288,38 @@ def main():
             print("  -", e)
     else:
         print("\nImportação concluída sem erros!")
+
+
+def importar_alimentacao(s, dias):
+    """Cria/atualiza a despesa de alimentação de cada dia. Dias editados à mão no app não são tocados."""
+    meses = sorted({(d["data"].year, d["data"].month) for d in dias})
+    existentes = collections.defaultdict(list)
+    for ano, mes in meses:
+        r = s.get(f"{BASE_URL}/despesas/?ano={ano}&mes={mes}", timeout=TIMEOUT)
+        r.raise_for_status()
+        for d in r.json()["despesas"]:
+            if d["categoria"] == "alimentacao":
+                existentes[d["data"]].append(d)
+    criados = iguais = manuais = 0
+    for d in dias:
+        ja = existentes.get(d["data"].isoformat(), [])
+        if any(not x["automatica"] for x in ja):
+            manuais += 1
+            continue
+        if len(ja) == 1 and abs(ja[0]["valor"] - d["valor"]) < 0.01 and ja[0]["pessoas"] == d["pessoas"]:
+            iguais += 1
+            continue
+        for x in ja:
+            s.delete(f"{BASE_URL}/despesas/{x['id']}", timeout=TIMEOUT).raise_for_status()
+        valor_pessoa = d["valor"] / d["pessoas"] if d["pessoas"] else d["valor"]
+        s.post(f"{BASE_URL}/despesas/", json={
+            "data": d["data"].isoformat(), "categoria": "alimentacao", "valor": d["valor"],
+            "pessoas": d["pessoas"], "automatica": True,
+            "descricao": f"{d['pessoas']} pessoa(s) × R$ " + f"{valor_pessoa:.2f}".replace(".", ",") if d["pessoas"] else "Alimentação (planilha)",
+        }, timeout=TIMEOUT).raise_for_status()
+        criados += 1
+    total = sum(d["valor"] for d in dias)
+    print(f"\nAlimentação: {len(dias)} dias (R$ {total:,.2f}) -> {criados} lançados, {iguais} já estavam iguais, {manuais} mantidos (editados no app)")
 
 
 def achar_func(nome, ids_func):

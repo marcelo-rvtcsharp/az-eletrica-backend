@@ -4,7 +4,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Obra, Apontamento, ApontamentoItem, get_db
+from app.models import Obra, Apontamento, ApontamentoItem, Despesa, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/obras", tags=["obras"])
@@ -118,6 +118,7 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
         if apto and not apto.itens and not apto.adicionais:
             db.delete(apto)
 
+    db.query(Despesa).filter(Despesa.obra_id == id).update({Despesa.obra_id: None})
     db.delete(o)
     db.commit()
     return {"ok": True}
