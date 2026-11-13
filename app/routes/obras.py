@@ -119,6 +119,8 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
             db.delete(apto)
 
     db.query(Despesa).filter(Despesa.obra_id == id).update({Despesa.obra_id: None})
+    from app.routes.ferramentas import devolver_ao_deposito
+    devolver_ao_deposito(db, o)
     db.delete(o)
     db.commit()
     return {"ok": True}

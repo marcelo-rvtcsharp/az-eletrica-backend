@@ -207,6 +207,39 @@ class Despesa(Base):
     criado_em  = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Ferramentas: cadastro, onde está cada unidade e histórico ──────────────
+class Ferramenta(Base):
+    __tablename__ = "ferramentas"
+    id               = Column(Integer, primary_key=True, index=True)
+    nome             = Column(String, nullable=False)
+    quantidade_total = Column(Integer, nullable=False, default=1)
+    observacao       = Column(Text)
+    criado_em        = Column(DateTime, default=datetime.utcnow)
+
+
+class FerramentaLocal(Base):
+    """Quantas unidades da ferramenta estão em cada obra.
+    O que não está em nenhuma obra está no Depósito."""
+    __tablename__ = "ferramenta_locais"
+    id            = Column(Integer, primary_key=True, index=True)
+    ferramenta_id = Column(Integer, ForeignKey("ferramentas.id"), nullable=False)
+    obra_id       = Column(Integer, ForeignKey("obras.id"), nullable=False)
+    quantidade    = Column(Integer, nullable=False)
+    desde         = Column(Date)
+
+
+class FerramentaMov(Base):
+    __tablename__ = "ferramenta_movs"
+    id            = Column(Integer, primary_key=True, index=True)
+    ferramenta_id = Column(Integer, ForeignKey("ferramentas.id"), nullable=False)
+    data          = Column(Date, nullable=False)
+    quantidade    = Column(Integer, nullable=False)
+    origem_nome   = Column(String)     # nome guardado como texto: o histórico continua
+    destino_nome  = Column(String)     # legível mesmo se a obra for excluída
+    observacao    = Column(String)
+    criado_em     = Column(DateTime, default=datetime.utcnow)
+
+
 def migrar_colunas(engine):
     """create_all() não altera tabelas que já existem; aqui adicionamos
     as colunas novas em bancos criados antes desta versão."""
