@@ -243,6 +243,14 @@ class FerramentaMov(Base):
     criado_em     = Column(DateTime, default=datetime.utcnow)
 
 
+class EquipeMembro(Base):
+    """Equipe de um encarregado (usuário diarista): ele pode apontar a diária desses funcionários."""
+    __tablename__ = "equipe_membros"
+    id             = Column(Integer, primary_key=True, index=True)
+    usuario_id     = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    eletricista_id = Column(Integer, ForeignKey("eletricistas.id"), nullable=False)
+
+
 class FerramentaVisto(Base):
     """'Último lugar visto': registro rápido de onde a ferramenta foi vista,
     com foto opcional. Não mexe nas quantidades por obra."""

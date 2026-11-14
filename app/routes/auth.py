@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import re
 import unicodedata
-from app.models import Eletricista, Usuario, get_db
+from typing import List
+from app.models import Eletricista, EquipeMembro, Usuario, get_db
 from app.auth import hash_senha, verificar_senha, criar_token, get_usuario_atual, exigir_admin
 
 SENHA_PADRAO = "123456"
@@ -84,12 +85,36 @@ def me(usuario: Usuario = Depends(get_usuario_atual)):
 @router.get("/usuarios")
 def listar_usuarios(db: Session = Depends(get_db), _=Depends(exigir_admin)):
     nomes = dict(db.query(Eletricista.id, Eletricista.nome).all())
+    equipes = {}
+    for m in db.query(EquipeMembro).all():
+        equipes.setdefault(m.usuario_id, []).append(m.eletricista_id)
     out = []
     for u in db.query(Usuario).order_by(Usuario.nome).all():
         d = _ser(u)
         d["eletricista_nome"] = nomes.get(u.eletricista_id)
+        d["equipe"] = sorted(equipes.get(u.id, []), key=lambda i: nomes.get(i, ""))
+        d["equipe_nomes"] = [nomes.get(i, "?") for i in d["equipe"]]
         out.append(d)
     return out
+
+
+class EquipeSchema(BaseModel):
+    eletricista_ids: List[int] = []
+
+
+@router.put("/usuarios/{id}/equipe")
+def definir_equipe(id: int, data: EquipeSchema, db: Session = Depends(get_db), _=Depends(exigir_admin)):
+    """Define quem o encarregado (usuário diarista) pode apontar além dele mesmo."""
+    u = db.get(Usuario, id)
+    if not u or (u.perfil or "admin") != "diarista":
+        raise HTTPException(404, "Funcionário com acesso ao app não encontrado")
+    ids = {i for i in data.eletricista_ids if i != u.eletricista_id}
+    validos = {e.id for e in db.query(Eletricista).filter(Eletricista.id.in_(ids)).all()} if ids else set()
+    db.query(EquipeMembro).filter(EquipeMembro.usuario_id == id).delete()
+    for i in validos:
+        db.add(EquipeMembro(usuario_id=id, eletricista_id=i))
+    db.commit()
+    return {"ok": True, "equipe": sorted(validos)}
 
 
 class SenhaSchema(BaseModel):

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import exigir_diarista
-from app.models import Apontamento, ApontamentoItem, Eletricista, Obra, Usuario, get_db
+from app.models import Apontamento, ApontamentoItem, Eletricista, EquipeMembro, Obra, Usuario, get_db
 from app.routes import ferramentas as ferr
 from app.routes.notificacoes import notificar_admins
 
@@ -39,11 +39,25 @@ def _eletricista(db: Session, u: Usuario) -> Eletricista:
     return e
 
 
+def _equipe(db: Session, u: Usuario) -> list:
+    """Funcionários que este encarregado pode apontar (além dele mesmo)."""
+    ids = [m.eletricista_id for m in db.query(EquipeMembro).filter(EquipeMembro.usuario_id == u.id).all()]
+    if not ids:
+        return []
+    return (db.query(Eletricista).filter(Eletricista.id.in_(ids), Eletricista.status == "Ativo")
+            .order_by(Eletricista.nome).all())
+
+
+def _usuario_do(db: Session, eletricista_id: int):
+    x = db.query(Usuario.id).filter(Usuario.eletricista_id == eletricista_id, Usuario.perfil == "diarista").first()
+    return x[0] if x else None
+
+
 def _obras_abertas(db: Session):
     return (db.query(Obra).filter(Obra.status != "Concluída").order_by(Obra.nome).all())
 
 
-def _ser_apont(a: Apontamento, u: Usuario, e: Eletricista) -> dict:
+def _ser_apont(a: Apontamento, u: Usuario, e: Eletricista, pode_editar=None) -> dict:
     he = sum(float(x.replace(",", ".")) for x in RE_HE.findall(a.observacao or ""))
     d = float(e.valor_diaria or 0)
     itens = sorted(a.itens, key=lambda i: i.id or 0)
@@ -58,7 +72,10 @@ def _ser_apont(a: Apontamento, u: Usuario, e: Eletricista) -> dict:
         "horas_extras": he,
         "observacao": a.observacao,
         "meu": a.criado_por == u.id,
-        "editavel": a.criado_por == u.id and a.data >= _hoje() - timedelta(days=DIAS_PARA_TRAS),
+        "origem": "voce" if a.criado_por == u.id else
+                  ("encarregado" if "pelo encarregado" in (a.observacao or "") else
+                   ("funcionario" if "pelo funcionário no app" in (a.observacao or "") else "escritorio")),
+        "editavel": (a.criado_por in (pode_editar or {u.id})) and a.data >= _hoje() - timedelta(days=DIAS_PARA_TRAS),
     }
 
 
@@ -81,8 +98,17 @@ def inicio(ano: Optional[int] = None, mes: Optional[int] = None,
     ultimo = (db.query(ApontamentoItem.obra_id).join(Apontamento, Apontamento.id == ApontamentoItem.apontamento_id)
               .filter(Apontamento.eletricista_id == e.id).order_by(Apontamento.data.desc()).first())
     obras = _obras_abertas(db)
+    equipe = []
+    for m in _equipe(db, u):
+        permitidos = {u.id, _usuario_do(db, m.id)}
+        rec = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+               .filter(Apontamento.eletricista_id == m.id,
+                       Apontamento.data >= hoje - timedelta(days=DIAS_PARA_TRAS), Apontamento.data <= hoje).all())
+        equipe.append({"id": m.id, "nome": m.nome,
+                       "recentes": {a.data.isoformat(): _ser_apont(a, u, m, permitidos) for a in rec}})
     return {
         "funcionario": {"id": e.id, "nome": e.nome, "funcao": e.funcao},
+        "equipe": equipe,
         "usuario": {"nome": u.nome, "email": u.email, "senha_padrao": bool(u.senha_padrao)},
         "hoje": hoje.isoformat(),
         "dias_para_tras": DIAS_PARA_TRAS,
@@ -107,6 +133,7 @@ class ApontarSchema(BaseModel):
     obras: List[ObraDia]
     horas_extras: float = 0
     observacao: Optional[str] = None
+    eletricista_ids: Optional[List[int]] = None   # encarregado: ele e/ou a equipe; vazio = só ele
 
 
 def _fmt_h(h: float) -> str:
@@ -138,50 +165,89 @@ def apontar(data: ApontarSchema, db: Session = Depends(get_db), u: Usuario = Dep
         if o.obra_id not in obras:
             raise HTTPException(400, "Obra não encontrada ou já concluída")
 
-    existente = db.query(Apontamento).filter(Apontamento.eletricista_id == e.id,
-                                             Apontamento.data == data.data).first()
-    if existente and existente.criado_por != u.id:
-        raise HTTPException(409, "Esse dia já foi lançado pelo escritório. Para corrigir, fale com o engenheiro.")
-    if existente:
-        db.delete(existente)
-        db.flush()
+    # para quem: ele mesmo e/ou membros da equipe dele
+    equipe = {m.id: m for m in _equipe(db, u)}
+    ids = list(dict.fromkeys(data.eletricista_ids or [e.id]))
+    pessoas = []
+    for i in ids:
+        if i == e.id:
+            pessoas.append((e, {u.id}))
+        elif i in equipe:
+            pessoas.append((equipe[i], {u.id, _usuario_do(db, i)}))
+        else:
+            raise HTTPException(403, "Você só pode apontar a sua diária e a da sua equipe")
+    # confere tudo antes de gravar
+    existentes = {}
+    for pessoa, permitidos in pessoas:
+        ex = db.query(Apontamento).filter(Apontamento.eletricista_id == pessoa.id, Apontamento.data == data.data).first()
+        if ex and ex.criado_por not in permitidos:
+            quem = "Seu dia" if pessoa.id == e.id else f"O dia de {pessoa.nome}"
+            raise HTTPException(409, f"{quem} já foi lançado pelo escritório. Para corrigir, fale com o engenheiro.")
+        existentes[pessoa.id] = ex
 
-    diaria = float(e.valor_diaria or 0)
-    v_he = round(diaria / 8 * he, 2)
-    partes = []
-    if len(data.obras) > 1 or total < 1:
-        partes.append("; ".join(f"{obras[o.obra_id].nome}: {o.fracao:g} diária(s)".replace(".", ",") for o in data.obras))
-    if he:
-        partes.append(f"{obras[data.obras[0].obra_id].nome}: {_fmt_h(he)}h extra (R$ {v_he:.2f})")
     obs = (data.observacao or "").strip()
-    if obs:
-        partes.append("Obs.: " + obs[:300])
-    partes.append("Apontado pelo funcionário no app")
-    apto = Apontamento(eletricista_id=e.id, data=data.data, observacao=" · ".join(partes), criado_por=u.id)
-    db.add(apto)
-    db.flush()
-    for k, o in enumerate(data.obras):
-        db.add(ApontamentoItem(apontamento_id=apto.id, eletricista_id=e.id, obra_id=o.obra_id,
-                               valor=round(diaria * o.fracao + (v_he if k == 0 else 0), 2)))
+    resultado, corrigiu = [], False
+    for pessoa, permitidos in pessoas:
+        ex = existentes[pessoa.id]
+        if ex:
+            corrigiu = True
+            db.delete(ex)
+            db.flush()
+        diaria = float(pessoa.valor_diaria or 0)
+        v_he = round(diaria / 8 * he, 2)
+        partes = []
+        if len(data.obras) > 1 or total < 1:
+            partes.append("; ".join(f"{obras[o.obra_id].nome}: {o.fracao:g} diária(s)".replace(".", ",") for o in data.obras))
+        if he:
+            partes.append(f"{obras[data.obras[0].obra_id].nome}: {_fmt_h(he)}h extra (R$ {v_he:.2f})")
+        if obs:
+            partes.append("Obs.: " + obs[:300])
+        partes.append("Apontado pelo funcionário no app" if pessoa.id == e.id else f"Apontado pelo encarregado {e.nome} no app")
+        apto = Apontamento(eletricista_id=pessoa.id, data=data.data, observacao=" · ".join(partes), criado_por=u.id)
+        db.add(apto)
+        db.flush()
+        for k, o in enumerate(data.obras):
+            db.add(ApontamentoItem(apontamento_id=apto.id, eletricista_id=pessoa.id, obra_id=o.obra_id,
+                                   valor=round(diaria * o.fracao + (v_he if k == 0 else 0), 2)))
+        resultado.append((apto.id, pessoa, permitidos))
     db.commit()
 
     dia_txt = f"{DIAS_SEMANA[data.data.weekday()]} {data.data.strftime('%d/%m')}"
     locais = " + ".join(obras[o.obra_id].nome + (" (½)" if o.fracao == 0.5 else "") for o in data.obras)
-    notificar_admins(db, f"{'Diária corrigida' if existente else 'Diária apontada'} · {e.nome}",
-                     f"{dia_txt} · {locais}" + (f" · {_fmt_h(he)}h extra" if he else "") + (f" · {obs[:80]}" if obs else ""),
+    nomes = [p.nome for p, _ in pessoas]
+    if len(pessoas) == 1 and pessoas[0][0].id == e.id:
+        titulo = f"{'Diária corrigida' if corrigiu else 'Diária apontada'} · {e.nome}"
+        texto = f"{dia_txt} · {locais}"
+    else:
+        titulo = f"{'Diárias corrigidas' if corrigiu else 'Diárias apontadas'} por {e.nome} · {len(pessoas)} pessoa(s)"
+        texto = f"{dia_txt} · {locais} · {', '.join(nomes)}"
+    notificar_admins(db, titulo, texto + (f" · {_fmt_h(he)}h extra" if he else "") + (f" · {obs[:80]}" if obs else ""),
                      tipo="diaria", link="apontamentos")
-    a = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
-         .filter(Apontamento.id == apto.id).first())
-    return _ser_apont(a, u, e)
+    saida = []
+    for aid, pessoa, permitidos in resultado:
+        a = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+             .filter(Apontamento.id == aid).first())
+        d = _ser_apont(a, u, pessoa, permitidos)
+        d["eletricista_id"], d["nome"] = pessoa.id, pessoa.nome
+        saida.append(d)
+    return {"itens": saida, "corrigiu": corrigiu}
 
 
 @router.delete("/apontar/{dia}")
-def desfazer(dia: date, db: Session = Depends(get_db), u: Usuario = Depends(exigir_diarista)):
+def desfazer(dia: date, eletricista_id: Optional[int] = None, db: Session = Depends(get_db),
+             u: Usuario = Depends(exigir_diarista)):
     e = _eletricista(db, u)
+    permitidos = {u.id}
+    if eletricista_id and eletricista_id != e.id:
+        membro = {m.id: m for m in _equipe(db, u)}.get(eletricista_id)
+        if not membro:
+            raise HTTPException(403, "Esse funcionário não é da sua equipe")
+        permitidos.add(_usuario_do(db, membro.id))
+        e = membro
     a = db.query(Apontamento).filter(Apontamento.eletricista_id == e.id, Apontamento.data == dia).first()
     if not a:
         raise HTTPException(404, "Nada apontado nesse dia")
-    if a.criado_por != u.id or dia < _hoje() - timedelta(days=DIAS_PARA_TRAS):
+    if a.criado_por not in permitidos or dia < _hoje() - timedelta(days=DIAS_PARA_TRAS):
         raise HTTPException(403, "Esse dia não pode mais ser apagado por aqui. Fale com o escritório.")
     db.delete(a)
     db.commit()
