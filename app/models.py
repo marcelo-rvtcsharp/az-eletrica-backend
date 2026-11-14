@@ -44,6 +44,7 @@ class Usuario(Base):
     email       = Column(String, unique=True, nullable=False)
     senha_hash  = Column(String, nullable=False)
     perfil      = Column(String, default="admin")
+    cargo       = Column(String)          # ex: "CEO", "Engenheiro"
     ativo       = Column(Boolean, default=True)
     criado_em   = Column(DateTime, default=datetime.utcnow)
 
@@ -245,6 +246,10 @@ def migrar_colunas(engine):
     as colunas novas em bancos criados antes desta versão."""
     from sqlalchemy import inspect, text
     insp = inspect(engine)
+    if "usuarios" in insp.get_table_names():
+        if "cargo" not in {c["name"] for c in insp.get_columns("usuarios")}:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE usuarios ADD COLUMN cargo VARCHAR"))
     if "eletricistas" in insp.get_table_names():
         cols = {c["name"] for c in insp.get_columns("eletricistas")}
         if "salario_fixo" not in cols:
