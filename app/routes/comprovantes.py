@@ -185,7 +185,8 @@ def gerar_pdf(r: dict) -> bytes:
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas
 
-    AZUL, AMARELO, CINZA, LINHA = HexColor("#1a3a5c"), HexColor("#f5a623"), HexColor("#6b7785"), HexColor("#dde3ea")
+    from app import marca
+    AZUL, AMARELO, CINZA, LINHA = HexColor(marca.AZUL), HexColor(marca.AMARELO), HexColor("#6b7785"), HexColor("#dde3ea")
     CORES = ["#2563eb", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#64748b"]
     W, H = A4
     M = 34
@@ -222,14 +223,22 @@ def gerar_pdf(r: dict) -> bytes:
     def cabecalho(pag):
         c.setFillColor(AZUL)
         c.rect(0, H - 64, W, 64, stroke=0, fill=1)
+        lh = 40
+        try:
+            c.drawImage(marca.LOGO_MARCA, M - 4, H - 54, width=lh * marca.LOGO_MARCA_PROP, height=lh, mask="auto")
+        except Exception:
+            c.setFillColor(AMARELO)
+            c.setFont("Helvetica-Bold", 22)
+            c.drawString(M, H - 40, "AZ")
+        x = M + lh * marca.LOGO_MARCA_PROP + 6
         c.setFillColor(AMARELO)
-        c.setFont("Helvetica-Bold", 22)
-        c.drawString(M, H - 40, "AZ")
-        c.setFont("Helvetica", 12)
-        c.drawString(M + 34, H - 40, "Elétrica")
+        c.setFont("Helvetica-BoldOblique", 10)
+        c.drawString(x, H - 30, "ELÉTRICA")
         c.setFillColor(white)
         c.setFont("Helvetica", 9)
-        c.drawString(M, H - 55, "Resumo mensal de diárias e pagamento")
+        c.drawString(x, H - 44, "Resumo mensal de diárias e pagamento")
+        c.setFont("Helvetica-Oblique", 7.5)
+        c.drawString(x, H - 55, marca.SLOGAN)
         c.setFont("Helvetica-Bold", 14)
         c.drawRightString(W - M, H - 38, f"{MESES[mes - 1]} de {ano}")
         c.setFont("Helvetica", 9)

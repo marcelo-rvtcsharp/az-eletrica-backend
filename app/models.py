@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, deferred
 from datetime import datetime
 import os
 
@@ -239,6 +239,22 @@ class FerramentaMov(Base):
     destino_nome  = Column(String)     # legível mesmo se a obra for excluída
     observacao    = Column(String)
     criado_em     = Column(DateTime, default=datetime.utcnow)
+
+
+class FerramentaVisto(Base):
+    """'Último lugar visto': registro rápido de onde a ferramenta foi vista,
+    com foto opcional. Não mexe nas quantidades por obra."""
+    __tablename__ = "ferramenta_vistos"
+    id             = Column(Integer, primary_key=True, index=True)
+    ferramenta_id  = Column(Integer, ForeignKey("ferramentas.id"), nullable=False, index=True)
+    data           = Column(Date, nullable=False)
+    local          = Column(String, nullable=False)   # texto livre ou nome da obra
+    obra_id        = Column(Integer)                  # opcional (sem FK: obra pode ser excluída)
+    observacao     = Column(String)
+    registrado_por = Column(String)
+    foto_mime      = Column(String)
+    foto           = deferred(Column(LargeBinary))
+    criado_em      = Column(DateTime, default=datetime.utcnow)
 
 
 # ── Comprovantes de pagamento (arquivo guardado no banco) ──────────────────
