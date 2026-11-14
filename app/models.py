@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, DateTime, ForeignKey, Text, Boolean, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -239,6 +239,23 @@ class FerramentaMov(Base):
     destino_nome  = Column(String)     # legível mesmo se a obra for excluída
     observacao    = Column(String)
     criado_em     = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Comprovantes de pagamento (arquivo guardado no banco) ──────────────────
+class Comprovante(Base):
+    __tablename__ = "comprovantes"
+    id             = Column(Integer, primary_key=True, index=True)
+    eletricista_id = Column(Integer, ForeignKey("eletricistas.id"), nullable=False, index=True)
+    ano            = Column(Integer, nullable=False)
+    mes            = Column(Integer, nullable=False)
+    nome_arquivo   = Column(String, nullable=False)
+    mime           = Column(String, nullable=False)
+    tamanho        = Column(Integer, nullable=False)
+    dados          = Column(LargeBinary, nullable=False)
+    valor          = Column(Float)
+    data_pagamento = Column(Date)
+    observacao     = Column(String)
+    criado_em      = Column(DateTime, default=datetime.utcnow)
 
 
 def migrar_colunas(engine):
