@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.models import Base, engine, migrar_colunas
-from app.routes import auth, eletricistas, obras, apontamentos, orcamentos, dashboard, financeiro, despesas, ferramentas, comprovantes
+from app.auth import exigir_admin
+from app.routes import auth, eletricistas, obras, apontamentos, orcamentos, dashboard, financeiro, despesas, ferramentas, comprovantes, notificacoes, portal
 
 # Cria as tabelas
 Base.metadata.create_all(bind=engine)
@@ -23,16 +24,13 @@ app.add_middleware(
 )
 
 # Rotas
+# auth e portal cuidam das próprias permissões; o resto é só do escritório (admin)
 app.include_router(auth.router)
-app.include_router(eletricistas.router)
-app.include_router(obras.router)
-app.include_router(apontamentos.router)
-app.include_router(orcamentos.router)
-app.include_router(dashboard.router)
-app.include_router(financeiro.router)
-app.include_router(despesas.router)
-app.include_router(ferramentas.router)
-app.include_router(comprovantes.router)
+app.include_router(portal.router)
+app.include_router(notificacoes.router)
+_ADMIN = [Depends(exigir_admin)]
+for r in (eletricistas, obras, apontamentos, orcamentos, dashboard, financeiro, despesas, ferramentas, comprovantes):
+    app.include_router(r.router, dependencies=_ADMIN)
 
 
 @app.get("/")

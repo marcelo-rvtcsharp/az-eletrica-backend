@@ -43,8 +43,10 @@ class Usuario(Base):
     nome        = Column(String, nullable=False)
     email       = Column(String, unique=True, nullable=False)
     senha_hash  = Column(String, nullable=False)
-    perfil      = Column(String, default="admin")
+    perfil      = Column(String, default="admin")   # admin | diarista
     cargo       = Column(String)          # ex: "CEO", "Engenheiro"
+    eletricista_id = Column(Integer)      # perfil diarista: qual funcionário é
+    senha_padrao   = Column(Boolean, default=False)  # ainda usa a senha inicial
     ativo       = Column(Boolean, default=True)
     criado_em   = Column(DateTime, default=datetime.utcnow)
 
@@ -274,15 +276,48 @@ class Comprovante(Base):
     criado_em      = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Notificações (sininho do app + push no celular) ─────────────────────────
+class Notificacao(Base):
+    __tablename__ = "notificacoes"
+    id         = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    tipo       = Column(String)            # diaria | obra | outro
+    titulo     = Column(String, nullable=False)
+    texto      = Column(String)
+    link       = Column(String)            # tela do app a abrir
+    lida       = Column(Boolean, default=False)
+    criado_em  = Column(DateTime, default=datetime.utcnow)
+
+
+class PushAssinatura(Base):
+    __tablename__ = "push_assinaturas"
+    id         = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    endpoint   = Column(Text, nullable=False, unique=True)
+    p256dh     = Column(String, nullable=False)
+    auth       = Column(String, nullable=False)
+    criado_em  = Column(DateTime, default=datetime.utcnow)
+
+
+class Config(Base):
+    """Pares chave/valor do sistema (ex.: chaves VAPID do push)."""
+    __tablename__ = "config"
+    chave = Column(String, primary_key=True)
+    valor = Column(Text)
+
+
 def migrar_colunas(engine):
     """create_all() não altera tabelas que já existem; aqui adicionamos
     as colunas novas em bancos criados antes desta versão."""
     from sqlalchemy import inspect, text
     insp = inspect(engine)
     if "usuarios" in insp.get_table_names():
-        if "cargo" not in {c["name"] for c in insp.get_columns("usuarios")}:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE usuarios ADD COLUMN cargo VARCHAR"))
+        cols = {c["name"] for c in insp.get_columns("usuarios")}
+        novas = [("cargo", "VARCHAR"), ("eletricista_id", "INTEGER"), ("senha_padrao", "BOOLEAN DEFAULT FALSE")]
+        for nome, tipo in novas:
+            if nome not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE usuarios ADD COLUMN {nome} {tipo}"))
     if "eletricistas" in insp.get_table_names():
         cols = {c["name"] for c in insp.get_columns("eletricistas")}
         if "salario_fixo" not in cols:

@@ -4,7 +4,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Obra, Apontamento, ApontamentoItem, Despesa, get_db
+from app.models import Obra, Apontamento, ApontamentoItem, Despesa, FerramentaLocal, FerramentaVisto, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/obras", tags=["obras"])
@@ -124,3 +124,43 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
     db.delete(o)
     db.commit()
     return {"ok": True}
+
+
+class JuntarSchema(BaseModel):
+    destino_id: int
+
+
+@router.post("/{id}/juntar")
+def juntar(id: int, data: JuntarSchema, db: Session = Depends(get_db), _=Depends(get_usuario_atual)):
+    """Junta esta obra (ex.: pedida por um diarista com outro nome) a uma obra existente:
+    diárias, despesas e ferramentas passam para a obra de destino e esta é apagada."""
+    o = db.get(Obra, id)
+    d = db.get(Obra, data.destino_id)
+    if not o or not d:
+        raise HTTPException(404, "Obra não encontrada")
+    if o.id == d.id:
+        raise HTTPException(400, "Escolha outra obra")
+    # mesma pessoa no mesmo dia com as duas obras: soma no item da obra de destino
+    for item in db.query(ApontamentoItem).filter(ApontamentoItem.obra_id == id).all():
+        igual = db.query(ApontamentoItem).filter(ApontamentoItem.apontamento_id == item.apontamento_id,
+                                                 ApontamentoItem.obra_id == d.id).first()
+        if igual:
+            igual.valor = round(igual.valor + item.valor, 2)
+            db.delete(item)
+        else:
+            item.obra_id = d.id
+    db.query(Despesa).filter(Despesa.obra_id == id).update({Despesa.obra_id: d.id}, synchronize_session=False)
+    for l in db.query(FerramentaLocal).filter(FerramentaLocal.obra_id == id).all():
+        ld = db.query(FerramentaLocal).filter(FerramentaLocal.obra_id == d.id,
+                                              FerramentaLocal.ferramenta_id == l.ferramenta_id).first()
+        if ld:
+            ld.quantidade += l.quantidade
+            db.delete(l)
+        else:
+            l.obra_id = d.id
+    db.query(FerramentaVisto).filter(FerramentaVisto.obra_id == id).update(
+        {FerramentaVisto.obra_id: d.id, FerramentaVisto.local: d.nome}, synchronize_session=False)
+    db.flush()
+    db.delete(o)
+    db.commit()
+    return serializar(d, get_total_gasto(db, d.id))

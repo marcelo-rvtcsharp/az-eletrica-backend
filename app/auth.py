@@ -48,3 +48,16 @@ def get_usuario_atual(token: str = Depends(oauth2_scheme), db: Session = Depends
     if not usuario or not usuario.ativo:
         raise erro
     return usuario
+
+
+def exigir_admin(usuario: Usuario = Depends(get_usuario_atual)) -> Usuario:
+    """Telas de gestão: só administradores (CEO, engenheiro). Diarista não entra."""
+    if (usuario.perfil or "admin") == "diarista":
+        raise HTTPException(status_code=403, detail="Acesso restrito ao escritório")
+    return usuario
+
+
+def exigir_diarista(usuario: Usuario = Depends(get_usuario_atual)) -> Usuario:
+    if (usuario.perfil or "admin") != "diarista" or not usuario.eletricista_id:
+        raise HTTPException(status_code=403, detail="Área do funcionário")
+    return usuario

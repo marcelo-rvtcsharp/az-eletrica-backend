@@ -286,3 +286,165 @@ def folha(
         "totais": {k: tot(k) for k in ["valor_diarias", "salario_fixo", "adicionais", "bruto",
                                         "adiantamentos", "descontos", "parcelas", "a_receber"]},
     }
+
+
+# ── PDF da folha (registro mensal, para enviar pelo WhatsApp) ─────────────
+MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto",
+            "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+
+def _br(v: float) -> str:
+    return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def gerar_pdf_folha(f: dict, pagos: dict, gerado_por: str) -> bytes:
+    import io
+    from datetime import datetime, timedelta, timezone
+    from xml.sax.saxutils import escape
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from app import marca
+
+    AZUL, AMARELO, CINZA, VERDE, VERM = (HexColor(marca.AZUL), HexColor(marca.AMARELO), HexColor("#6b7785"),
+                                         HexColor("#15803d"), HexColor("#b91c1c"))
+    W, H = landscape(A4)
+    M, HEAD = 30, 78
+    ano, mes, t, linhas = f["ano"], f["mes"], f["totais"], f["linhas"]
+    titulo_mes = f"{MESES_PT[mes - 1]} de {ano}"
+    agora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y às %H:%M")
+
+    def cabecalho(c, doc):
+        c.saveState()
+        c.setFillColor(AZUL)
+        c.rect(0, H - HEAD, W, HEAD, stroke=0, fill=1)
+        c.setFillColor(AMARELO)
+        c.rect(0, H - HEAD - 4, W, 4, stroke=0, fill=1)
+        lh = 46
+        try:
+            c.drawImage(marca.LOGO_MARCA, M - 4, H - 62, width=lh * marca.LOGO_MARCA_PROP, height=lh, mask="auto")
+        except Exception:
+            pass
+        x = M + lh * marca.LOGO_MARCA_PROP + 10
+        c.setFillColor(AMARELO)
+        c.setFont("Helvetica-BoldOblique", 11)
+        c.drawString(x, H - 32, "ELÉTRICA")
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 15)
+        c.drawString(x, H - 50, "Folha de pagamento")
+        c.setFont("Helvetica-Oblique", 8)
+        c.drawString(x, H - 63, marca.SLOGAN)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawRightString(W - M, H - 38, titulo_mes)
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(HexColor("#c7d2fe"))
+        c.drawRightString(W - M, H - 54, f"{marca.EMPRESA} · CNPJ {marca.CNPJ}")
+        c.drawRightString(W - M, H - 66, f"{len(linhas)} funcionário(s)")
+        c.setFillColor(CINZA)
+        c.setFont("Helvetica", 7.5)
+        c.drawString(M, 18, f"Gerado em {agora}{' por ' + gerado_por if gerado_por else ''} · registro mensal da folha")
+        c.drawRightString(W - M, 18, f"Página {doc.page}")
+        c.restoreState()
+
+    st = lambda **k: ParagraphStyle("x", **{"fontName": "Helvetica", "fontSize": 8.5, "leading": 10.5, **k})
+    story = []
+
+    # quadros de resumo (como o dashboard da folha)
+    caixas = [("TOTAL BRUTO", t.get("bruto", 0), "diárias + fixos + adicionais", AZUL, False),
+              ("ADIANTAMENTOS", t.get("adiantamentos", 0), "já pagos no mês", AZUL, False),
+              ("DESCONTOS + PARCELAS", (t.get("descontos") or 0) + (t.get("parcelas") or 0), "empréstimos e avulsos", AZUL, False),
+              ("A PAGAR", t.get("a_receber", 0), "valor final a receber", AMARELO, True)]
+    cel = []
+    for rot, v, sub, cor, destaque in caixas:
+        cel.append([Paragraph(rot, st(fontName="Helvetica-Bold", fontSize=7.5, textColor=AMARELO if destaque else CINZA)),
+                    Paragraph(f"R$ {_br(v)}", st(fontName="Helvetica-Bold", fontSize=16, leading=20,
+                                                   textColor=white if destaque else AZUL)),
+                    Paragraph(sub, st(fontSize=7.5, textColor=HexColor("#c7d2fe") if destaque else CINZA))])
+    larg = (W - 2 * M - 3 * 10) / 4
+    quadros = Table([[Table([[x] for x in c], colWidths=[larg - 20]) for c in cel]],
+                    colWidths=[larg + 10] * 3 + [larg])
+    qs = [("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 10)]
+    quadros.setStyle(TableStyle(qs))
+    for k, (_, _, _, _, destaque) in enumerate(caixas):
+        quadros._cellvalues[0][k].setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), AZUL if destaque else HexColor("#f1f5ff")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (0, 0), 9),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 9), ("TOPPADDING", (0, 1), (-1, -1), 1)]))
+    story += [quadros, Spacer(0, 14)]
+
+    th = st(fontName="Helvetica-Bold", fontSize=7.5, textColor=AMARELO, alignment=2)
+    th_l = st(fontName="Helvetica-Bold", fontSize=7.5, textColor=AMARELO)
+    cab = [Paragraph("FUNCIONÁRIO", th_l), Paragraph("DIÁRIAS / FIXO", th), Paragraph("ADICIONAIS", th),
+           Paragraph("BRUTO", th), Paragraph("ADIANT.", th), Paragraph("DESCONTOS", th), Paragraph("PARCELAS", th),
+           Paragraph("A RECEBER", th), Paragraph("PAGO", st(fontName="Helvetica-Bold", fontSize=7.5, textColor=AMARELO, alignment=1))]
+    dados = [cab]
+    neg = lambda v: f"- {_br(v)}" if v else "—"
+    for l in linhas:
+        mens = l["tipo_contrato"] == "Mensalista"
+        nome = (f"<b>{escape(l['nome'])}</b><br/><font size=7 color='#6b7785'>"
+                + ("Mensalista" if mens else f"{l['dias']} dia(s) apontado(s)") + "</font>")
+        if l.get("parcelas_detalhe"):
+            nome += f"<br/><font size=6.5 color='#6b7785'>{escape(' | '.join(l['parcelas_detalhe']))}</font>"
+        pago = pagos.get(str(l["eletricista_id"]))
+        dados.append([Paragraph(nome, st()),
+                      (_br(l["salario_fixo"]) + " (fixo)") if mens else _br(l["valor_diarias"]),
+                      ("+ " + _br(l["adicionais"])) if l["adicionais"] else "—",
+                      _br(l["bruto"]), neg(l["adiantamentos"]), neg(l["descontos"]), neg(l["parcelas"]),
+                      "R$ " + _br(l["a_receber"]),
+                      "PAGO" if pago else ""])
+    dados.append([Paragraph("<b>TOTAL DA FOLHA</b>", st(textColor=white)),
+                  _br((t.get("valor_diarias") or 0) + (t.get("salario_fixo") or 0)), _br(t.get("adicionais") or 0),
+                  _br(t.get("bruto") or 0), neg(t.get("adiantamentos") or 0), neg(t.get("descontos") or 0),
+                  neg(t.get("parcelas") or 0), "R$ " + _br(t.get("a_receber") or 0),
+                  f"{sum(1 for l in linhas if pagos.get(str(l['eletricista_id'])))}/{len(linhas)}"])
+    resto = W - 2 * M - 150
+    cw = [150] + [resto * p for p in (0.14, 0.12, 0.13, 0.12, 0.12, 0.12, 0.16)] + [resto * 0.09]
+    tb = Table(dados, colWidths=cw, repeatRows=1)
+    n = len(dados)
+    sty = [("BACKGROUND", (0, 0), (-1, 0), AZUL), ("FONT", (1, 1), (-1, -1), "Helvetica", 8.5),
+           ("ALIGN", (1, 1), (-2, -1), "RIGHT"), ("ALIGN", (-1, 0), (-1, -1), "CENTER"),
+           ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 1), (-1, -2), 0.4, HexColor("#e2e8f0")),
+           ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+           ("FONT", (7, 1), (7, -2), "Helvetica-Bold", 9), ("TEXTCOLOR", (7, 1), (7, -2), AZUL),
+           ("TEXTCOLOR", (4, 1), (6, -2), VERM), ("FONT", (-1, 1), (-1, -2), "Helvetica-Bold", 7.5),
+           ("TEXTCOLOR", (-1, 1), (-1, -2), VERDE),
+           ("BACKGROUND", (0, n - 1), (-1, n - 1), AZUL), ("TEXTCOLOR", (1, n - 1), (-1, n - 1), white),
+           ("FONT", (1, n - 1), (-1, n - 1), "Helvetica-Bold", 9), ("TEXTCOLOR", (7, n - 1), (7, n - 1), AMARELO),
+           ("FONT", (7, n - 1), (7, n - 1), "Helvetica-Bold", 11)]
+    for r in range(2, n - 1, 2):
+        sty.append(("BACKGROUND", (0, r), (-1, r), HexColor("#f6f8fd")))
+    for r, l in enumerate(linhas, start=1):
+        if l["a_receber"] < 0:
+            sty.append(("TEXTCOLOR", (7, r), (7, r), VERM))
+    tb.setStyle(TableStyle(sty))
+    story.append(tb)
+
+    nota = Paragraph("Mensalistas recebem o fixo + adicionais (diárias lançadas para eles entram só no custo das obras). "
+                     "PAGO = comprovante de pagamento anexado no app.", st(fontSize=7.5, textColor=CINZA))
+    lw = (W - 2 * M - 60) / 2
+    ass = Table([["", "", ""], ["Responsável pela folha", "", "Aprovação · Diretoria"]], colWidths=[lw, 60, lw],
+                rowHeights=[30, 14])
+    ass.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, CINZA), ("LINEABOVE", (2, 1), (2, 1), 0.6, CINZA),
+                             ("FONT", (0, 1), (-1, 1), "Helvetica", 8), ("TEXTCOLOR", (0, 1), (-1, 1), CINZA),
+                             ("ALIGN", (0, 1), (-1, 1), "CENTER")]))
+    story.append(KeepTogether([Spacer(0, 8), nota, Spacer(0, 16), ass]))
+
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=(W, H), leftMargin=M, rightMargin=M, topMargin=HEAD + 18, bottomMargin=34,
+                      title=f"Folha {titulo_mes} - AZ Elétrica", author="AZ Elétrica").build(
+        story, onFirstPage=cabecalho, onLaterPages=cabecalho)
+    return buf.getvalue()
+
+
+@router.get("/folha/pdf")
+def folha_pdf(ano: int, mes: int = Query(..., ge=1, le=12), db: Session = Depends(get_db),
+              usuario=Depends(get_usuario_atual)):
+    from fastapi.responses import Response
+    from app.models import Comprovante
+    f = folha(ano=ano, mes=mes, db=db, _=None)
+    pagos = {str(e): True for (e,) in db.query(Comprovante.eletricista_id)
+             .filter(Comprovante.ano == ano, Comprovante.mes == mes).distinct().all()}
+    pdf = gerar_pdf_folha(f, pagos, getattr(usuario, "nome", "") or "")
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="Folha_AZ_{ano}-{mes:02d}.pdf"'})

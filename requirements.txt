@@ -8,3 +8,4 @@ bcrypt==4.0.1
 python-multipart==0.0.9
 psycopg2-binary==2.9.10
 reportlab==4.2.5
+pywebpush==1.14.1

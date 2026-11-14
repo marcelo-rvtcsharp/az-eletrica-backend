@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
-from app.models import Eletricista, Apontamento, LancamentoFinanceiro, Emprestimo, Comprovante, get_db
+from app.models import Eletricista, Apontamento, LancamentoFinanceiro, Emprestimo, Comprovante, Usuario, get_db
 from app.auth import get_usuario_atual
 
 router = APIRouter(prefix="/eletricistas", tags=["eletricistas"])
@@ -93,6 +93,7 @@ def deletar(id: int, db: Session = Depends(get_db), _=Depends(get_usuario_atual)
     db.query(LancamentoFinanceiro).filter(LancamentoFinanceiro.eletricista_id == id).delete()
     db.query(Emprestimo).filter(Emprestimo.eletricista_id == id).delete()
     db.query(Comprovante).filter(Comprovante.eletricista_id == id).delete()
+    db.query(Usuario).filter(Usuario.eletricista_id == id, Usuario.perfil == "diarista").delete()
     db.delete(e)
     db.commit()
     return {"ok": True}
