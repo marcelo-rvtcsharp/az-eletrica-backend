@@ -58,12 +58,18 @@ def _obras_abertas(db: Session):
 
 
 def _ser_apont(a: Apontamento, u: Usuario, e: Eletricista, pode_editar=None) -> dict:
-    he = sum(float(x.replace(",", ".")) for x in RE_HE.findall(a.observacao or ""))
+    he_item = sum(float(x.replace(",", ".")) for x in RE_HE.findall(a.observacao or ""))  # HE somada no valor da obra
     d = float(e.valor_diaria or 0)
+    he_adic = 0.0                                                                       # HE lançada como adicional
+    for ad in (a.adicionais or []):
+        if ad.tipo == "hora_extra":
+            m = re.search(r"(\d+(?:[.,]\d+)?)\s*h", ad.descricao or "")
+            he_adic += float(m.group(1).replace(",", ".")) if m else (ad.valor / (d / 8) if d else 0)
+    he = round(he_item + he_adic, 2)
     itens = sorted(a.itens, key=lambda i: i.id or 0)
 
     def fracao(k, i):
-        v = i.valor - (d / 8 * he if k == 0 else 0)
+        v = i.valor - (d / 8 * he_item if k == 0 else 0)
         return 0.5 if d and v < d * 0.75 else 1
     return {
         "data": a.data.isoformat(),
@@ -87,12 +93,12 @@ def inicio(ano: Optional[int] = None, mes: Optional[int] = None,
     ano, mes = ano or hoje.year, mes or hoje.month
     ini = date(ano, mes, 1)
     fim = date(ano + (mes == 12), mes % 12 + 1, 1)
-    aps = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+    aps = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra), joinedload(Apontamento.adicionais))
            .filter(Apontamento.eletricista_id == e.id, Apontamento.data >= ini, Apontamento.data < fim)
            .order_by(Apontamento.data).all())
     lista = [_ser_apont(a, u, e) for a in aps]
     # dias recentes (para saber se já apontou hoje/ontem, mesmo na virada do mês)
-    recentes = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+    recentes = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra), joinedload(Apontamento.adicionais))
                 .filter(Apontamento.eletricista_id == e.id,
                         Apontamento.data >= hoje - timedelta(days=DIAS_PARA_TRAS), Apontamento.data <= hoje).all())
     ultimo = (db.query(ApontamentoItem.obra_id).join(Apontamento, Apontamento.id == ApontamentoItem.apontamento_id)
@@ -101,7 +107,7 @@ def inicio(ano: Optional[int] = None, mes: Optional[int] = None,
     equipe = []
     for m in _equipe(db, u):
         permitidos = {u.id, _usuario_do(db, m.id)}
-        rec = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+        rec = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra), joinedload(Apontamento.adicionais))
                .filter(Apontamento.eletricista_id == m.id,
                        Apontamento.data >= hoje - timedelta(days=DIAS_PARA_TRAS), Apontamento.data <= hoje).all())
         equipe.append({"id": m.id, "nome": m.nome,
@@ -225,7 +231,7 @@ def apontar(data: ApontarSchema, db: Session = Depends(get_db), u: Usuario = Dep
                      tipo="diaria", link="apontamentos")
     saida = []
     for aid, pessoa, permitidos in resultado:
-        a = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra))
+        a = (db.query(Apontamento).options(joinedload(Apontamento.itens).joinedload(ApontamentoItem.obra), joinedload(Apontamento.adicionais))
              .filter(Apontamento.id == aid).first())
         d = _ser_apont(a, u, pessoa, permitidos)
         d["eletricista_id"], d["nome"] = pessoa.id, pessoa.nome
